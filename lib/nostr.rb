@@ -37,15 +37,18 @@ class WebSocket
     @io = io
   end
   
+  SEC_ACCEPT_SUFFIX = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+  
   def greet path,
             host:, origin: nil
     origin ||= "http://#{host}"
+    wskey = Base64.encode64(SecureRandom.bytes(16)).gsub(/\s+/, '')
     @io.write(<<-EOT % [ path, host, origin ])
 GET %s HTTP/1.1
 Host: %s
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==
+Sec-WebSocket-Key: #{wskey}
 Sec-WebSocket-Version: 13
 Origin: %s
 
@@ -53,7 +56,12 @@ EOT
     @io.flush
     wait_for_input
     resp = read_http_response
-    raise ConnectError.new('Error requesting websocket') unless resp[0] =~ /^HTTP\/1.1 101/
+    raise ConnectError.new("Error requesting websocket: #{resp[0]}") unless resp[0] =~ /^HTTP\/1\.1 +101/
+    accept_hdr = resp.find { |l| l =~ /^Sec-WebSocket-Accept: (.*)$/i } # todo multiline?
+    accept_key = $1.gsub(/\s+/, '')
+    resp_key = Base64.encode64(Digest::SHA1.digest(wskey + SEC_ACCEPT_SUFFIX)).gsub(/\s+/, '')
+    raise ConnectError.new("Invalid WS key returned") if resp_key != accept_key
+    # todo handle redirects and security upgrades
     resp
   end
 
