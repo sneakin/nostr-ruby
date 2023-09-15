@@ -1,0 +1,29 @@
+PATH
+  remote: .
+  specs:
+    nostr (0.1.0)
+      bech32
+      rake
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    bech32 (1.4.2)
+      thor (>= 1.1.0)
+    bip-schnorr (0.6.0)
+      ecdsa_ext (~> 0.5.0)
+    ecdsa (1.2.0)
+    ecdsa_ext (0.5.0)
+      ecdsa (~> 1.2.0)
+    rake (13.0.6)
+    thor (1.2.2)
+
+PLATFORMS
+  aarch64-linux-android
+
+DEPENDENCIES
+  bip-schnorr
+  nostr!
+
+BUNDLED WITH
+   2.4.15
