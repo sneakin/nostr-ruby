@@ -587,10 +587,11 @@ if $0 == __FILE__
   uri = ARGV[0] || 'wss://nos.lol/'
   since = (ARGV[1] || 60).to_i
   verbose = ENV.fetch('VERBOSE', '0') != '0'
-  private_key = if ENV['KEY']
-    NostrSocket::PrivateKey.new(ENV['KEY'].to_i(16))
-  else
-    NostrSocket::PrivateKey.generate
+  private_key = case ENV['KEY']
+  when /^nsec/ then NostrSocket::PrivateKey.new(Bech32::Nostr::NIP19.decode(ENV['KEY']).data.to_i(16))
+  when String then NostrSocket::PrivateKey.new(ENV['KEY'].to_i(16))
+  when nil then NostrSocket::PrivateKey.generate
+  else raise 'Unknown key format'
   end
   puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, Bech32::Nostr::BareEntity.new('nsec', private_key.hexdigest).encode ])
   puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, Bech32::Nostr::BareEntity.new('npub', private_key.public_key.hexdigest).encode ])
