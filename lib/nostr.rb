@@ -28,6 +28,19 @@ class Hash
   end
 end
 
+class Integer
+  def nth_byte byte
+    (self >> (byte * 8)) & 0xFF
+  end
+    
+  # todo unused
+  def self.revbits bits = 32
+    bits.times.reduce(0) do |a, i|
+      a | (((self >> i) & 1) << (bits-1-i))
+    end
+  end
+end
+
 class WebSocket
   class ConnectError < RuntimeError; end
   
@@ -67,9 +80,10 @@ EOT
 
   def wait_for_input timeout = 1000
     i,o,e = IO.select([@io], [], [], timeout)
-    i.include?(@io)
+    i[0] == @io
   end
-  
+
+  # todo could use a line reader like stdin  
   def read_http_response
     lines = []
     begin
@@ -81,12 +95,6 @@ EOT
   end
 
   class Frame
-    def self.revbits n, bits
-      bits.times.reduce(0) do |a, i|
-        a | (((n >> i) & 1) << (bits-1-i))
-      end
-    end
-    
     OpCode = {
       # 0 Continuation frame
       0 => :continue,
@@ -152,13 +160,9 @@ EOT
       self.payload = payload || ''
     end
     
-    def nth_byte n, byte
-      (n >> (byte * 8)) & 0xFF
-    end
-    
     def mask_string str, mask = @mask
       str.unpack('C*').each.with_index.
-        collect { |v, i| v ^ nth_byte(mask, 3 - (i & 3)) }.
+        collect { |v, i| v ^ mask.nth_byte(3 - (i & 3)) }.
         pack('C*')
     end
 
@@ -217,12 +221,10 @@ EOT
       @header, rest = str.unpack('S>a*')
       return [ nil, str ] if @header == nil
 
-      if length0 == 126
-        @length, rest = rest.unpack('S>a*')
-      elsif length0 == 127
-        @length, rest = rest.unpack('Q>a*')
-      else
-        @length = length0
+      case length0
+      when 126 then @length, rest = rest.unpack('S>a*')
+      when 127 then @length, rest = rest.unpack('Q>a*')
+      else @length = length0
       end
       return [ nil, str ] if @length == nil
       
@@ -250,7 +252,6 @@ EOT
     rest = @rest || ''
     begin
       frame, more = Frame.unpack(rest)
-      #$stderr.puts("\e[33munpacked #{frame && frame.opcode} #{frame.inspect} #{more.inspect}")
       if frame == nil || frame.length != frame.payload.size
         to_read = frame ? frame.length - frame.payload.size : 4096
         rest += io.read_nonblock(to_read)
@@ -269,14 +270,14 @@ EOT
     
     fragments = @fragments || []
     
-    begin
-      frame = read_frame
-      break unless frame
+    while frame = read_frame
       if frame.fin == 1
         if frame.opcode == 0 && !fragments.empty?
           fragments << fragment
-          #puts("joining #{fragments.size} frags")
-          frame = fragments[0].dup.tap { |f| f.payload = fragments.collect(&:payload).join }
+          frame = fragments[0].dup.tap { |f|
+            f.payload = fragments.collect(&:payload).join
+            f.fin = true
+          }
           fragments = []
         end
         cb.call(frame)
@@ -287,22 +288,20 @@ EOT
           cb.call(frame)
         end
       end
-    end while frame
+    end
 
     @fragments = fragments
-    #raise StopIteration
     self
   end
 
   def send_frame frame
-    $stderr.puts("Sending frame #{frame.inspect}")
     io.write(frame.pack)
     io.flush
     self
   end
     
   def send_text payload
-    send_frame(Frame.new(payload: payload, mask: rand(0xFFFFFFFF), opcode: :text))
+    send_frame(Frame.new(opcode: :text, mask: rand(0xFFFFFFFF), payload: payload))
   end
   
   def ping
@@ -364,8 +363,8 @@ class NostrSocket < WebSocket
   #   "content": <arbitrary string>,
   #   "sig": <64-bytes lowercase hex of the signature of the sha256 hash of the serialized event data, which is the same as the "id" field>
   # }
-  def event **msg
-    send_text(JSON.dump([ 'EVENT', msg ]))
+  def event msg = nil, **opts
+    send_text(JSON.dump([ 'EVENT', msg ? msg.to_h : opts ]))
   end
   
   # {
@@ -440,7 +439,6 @@ class NostrSocket < WebSocket
     end
     
     def digest
-      # Hex.dehex(hexdigest)
       ECDSA::Format::IntegerOctetString.encode(@secret, 32)
     end
     
@@ -449,16 +447,10 @@ class NostrSocket < WebSocket
     end
     
     def verify msg, sig
-      #sig = OpenSSL::BN.new(sig, 16)
-      #pub = [ hexdigest ].pack('H*')
-      #@key.dsa_verify_asn1(msg, sig)
       Schnorr.valid_sig?(msg, digest, sig)
     end
 
     def self.generate group = ECDSA::Group::Secp256k1
-      #key = OpenSSL::PKey::EC.new("secp256k1")
-      #key.generate_key
-      #key.private_key.to_i, key.public_key.to_bn.to_i
       priv = nil
       pub = nil
       begin
@@ -467,6 +459,15 @@ class NostrSocket < WebSocket
       end until pub.even?
       
       self.new(priv, pub)
+    end
+    
+    def self.load str
+      case str
+      when /^nsec/ then new(Bech32::Nostr::NIP19.decode(str).data.to_i(16))
+      when String then new(str.to_i(16))
+      when Integer then new(str)
+      else nil
+      end
     end
   end
   
@@ -477,9 +478,17 @@ class NostrSocket < WebSocket
       self.new(group.generator.multiply_by_scalar(priv))
     end
         
+    def self.load str
+      case str
+      when /^npub/ then new(Bech32::Nostr::NIP19.decode(str).data)
+      when String then new(str)
+      when ECDSA::Point then new(str)
+      else nil
+      end
+    end
+
     def initialize bytes
-      @key = if String === bytes
-         #bytes = '02' + bytes if bytes.size == 64
+      @key = if String === bytes # todo rely on #load
          ECDSA::Format::PointOctetString.decode(Hex.dehex(bytes), ECDSA::Group::Secp256k1)
       else
         bytes
@@ -491,12 +500,10 @@ class NostrSocket < WebSocket
     end
     
     def hexdigest
-      #@key.to_s(16).rjust(66, '0') # .public_key.to_bn.to_s(16)[2,64].downcase
       Hex.hex(digest)
     end
     
     def digest
-      #[ hexdigest ].pack('H*')
       ECDSA::Format::PointOctetString.encode(@key, compression: true)[-32,32]
     end
     
@@ -561,7 +568,6 @@ class NostrSocket < WebSocket
     end
     
     def sign! key
-      #s = Schnorr.sign([ digest ].pack('H*'), [ key.hexdigest ].pack('H*'))
       @pubkey = key.public_key
       @id = hexdigest
       s = key.sign(Hex.dehex(@id))
@@ -592,37 +598,52 @@ class NostrSocket < WebSocket
 end
 
 if $0 == __FILE__
+  # todo one shot REQs to get profile names
+  
   uri = ARGV[0] || 'wss://nos.lol/'
   since = (ARGV[1] || 60).to_i
   verbose = ENV.fetch('VERBOSE', '0') != '0'
-  private_key = case ENV['KEY']
-  when /^nsec/ then NostrSocket::PrivateKey.new(Bech32::Nostr::NIP19.decode(ENV['KEY']).data.to_i(16))
-  when String then NostrSocket::PrivateKey.new(ENV['KEY'].to_i(16))
-  when nil then NostrSocket::PrivateKey.generate
-  else raise 'Unknown key format'
-  end
+  private_key = NostrSocket::PrivateKey.load(ENV['KEY']) || NostrSocket::PrivateKey.generate
   
   puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, Bech32::Nostr::BareEntity.new('nsec', private_key.hexdigest).encode ])
   puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, Bech32::Nostr::BareEntity.new('npub', private_key.public_key.hexdigest).encode ])
 
   s, http_resp = NostrSocket.connect(uri)
   puts("\e[0m", *http_resp)
-  s.open_req('firehose', since: Time.now.to_i - since)
-  s.open_req('self0', since: Time.now.to_i - since * since, authors: [ private_key.public_key.hexdigest ])
+  short_pub = private_key.public_key.hexdigest[0, 8]
+  s.open_req("firehose-#{short_pub}", since: Time.now.to_i - since)
+  s.open_req("self-#{short_pub}",
+             since: Time.now.to_i - since * since,
+             authors: [ private_key.public_key.hexdigest ])
 
   done = false
+  data = ''
+  post = nil
   while !done
     i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
     if i.include?($stdin)
-      data = ''
-      while (line = $stdin.readline) && !(line =~ /^[\r\n]+$/)
-        data += line
+      begin
+        line = $stdin.read_nonblock(4096)
+        pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
+        if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
+          blank = "\n\n"
+        end
+        puts("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
+        data += pre
+      rescue IO::EAGAINWaitReadable
+      end while blank == ''
+
+      if blank != ''
+        m = NostrSocket::Message.new(kind: 1, created_at: Time.now, content: data)
+        m.sign!(private_key)
+        s.event(**m.to_h)
+        data = post || ''
+        post = nil
       end
-      m = NostrSocket::Message.new(kind: 1, created_at: Time.now, content: data)
-      m.sign!(private_key)
-      s.event(**m.to_h)
-    elsif i.include?(s.io)
-      fr = s.read_frames
+    end
+
+    if i.include?(s.io)
+      fr = s.read_frames.to_a
       fr.each do |frame|
         s.pong(frame) if frame.opcode == :ping
         done = true if frame.opcode == :close
@@ -636,10 +657,8 @@ if $0 == __FILE__
         else puts("\e[37m" + frame.inspect) if verbose
         end if NostrSocket::Frame === frame
       end
-    else
-      puts("Timed out.")
     end
-    #s.wait_for_input(60*60)
   end
+
   s.close
 end
