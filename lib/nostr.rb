@@ -593,13 +593,17 @@ if $0 == __FILE__
   when nil then NostrSocket::PrivateKey.generate
   else raise 'Unknown key format'
   end
+  
   puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, Bech32::Nostr::BareEntity.new('nsec', private_key.hexdigest).encode ])
   puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, Bech32::Nostr::BareEntity.new('npub', private_key.public_key.hexdigest).encode ])
+
   s, http_resp = NostrSocket.connect(uri)
-  puts("\e[32m", *http_resp)
+  puts("\e[0m", *http_resp)
   s.open_req('firehose', since: Time.now.to_i - since)
   s.open_req('self0', since: Time.now.to_i - since * since, authors: [ private_key.public_key.hexdigest ])
-  while true
+
+  done = false
+  while !done
     i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
     if i.include?($stdin)
       data = ''
@@ -613,7 +617,7 @@ if $0 == __FILE__
       fr = s.read_frames
       fr.each do |frame|
         s.pong(frame) if frame.opcode == :ping
-        break if frame.opcode == :close
+        done = true if frame.opcode == :close
         case frame.event_type
         when 'EVENT' then
           puts("\e[35m--- %s" % [ frame.payload.req ],
