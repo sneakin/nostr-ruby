@@ -80,7 +80,7 @@ EOT
 
   def wait_for_input timeout = 1000
     i,o,e = IO.select([@io], [], [], timeout)
-    i[0] == @io
+    i && i[0] == @io
   end
 
   # todo could use a line reader like stdin  
