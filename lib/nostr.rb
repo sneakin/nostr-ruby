@@ -375,8 +375,11 @@ class NostrSocket < WebSocket
   # "until": <an integer unix timestamp in seconds, events must be older than this to pass>,
   # "limit": <maximum number of events relays SHOULD return in the initial query>
   # }
-  def open_req id, **filters
-    send_text(JSON.dump([ 'REQ', id, filters ]))
+  def open_req id, *filters, **filter
+    payload = [ 'REQ', id ]
+    payload << filter unless filter.empty?
+    payload += filters unless filters.empty?
+    send_text(JSON.dump(payload))
   end
   
   def close_req id
@@ -640,6 +643,7 @@ if $0 == __FILE__
     req_fh => 43,
     req_self => 42
   }
+  profiles = Hash.new { |h, k| h[k] = Hash.new }
 
   done = false
   data = ''
@@ -699,10 +703,25 @@ if $0 == __FILE__
           ping_time = nil
         when :text, :binary then
           case frame.event_type
+          when 'EOSE' then
+            puts("\e[31mEOSE #{frame.payload.req}")
           when 'EVENT' then
-            puts("\e[0;30;%sm--- %s\e[0m" % [ palette[frame.payload.req] || 40, frame.payload.req ],
-                 "\e[36m%s" % [ Bech32::Nostr::BareEntity.new('note', frame.payload.id).encode ], # bech32 tlsentity
-                 "\e[%sm%s" % [ frame.payload.verify ? '32' : '31', Bech32::Nostr::BareEntity.new('npub', frame.payload.pubkey.hexdigest).encode ],
+            pk_hex = frame.payload.pubkey.hexdigest
+            pk = Bech32::Nostr::BareEntity.new('npub', pk_hex).encode
+            if frame.payload.kind == 0 && frame.payload.req =~ /^profile/
+              profiles[pk_hex].merge!(JSON.load(frame.payload.content))
+              s.close_req(frame.payload.req)
+            else
+            if profiles[pk_hex].empty?
+              rn = "profile-#{pk_hex[0,8]}"
+              profiles[pk_hex][:req_id] = rn
+              puts("\e[1;31mREQ #{rn}")
+              s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1)
+            end
+            end
+            puts("\e[0;30;%sm--- %s\e[0m" % [ palette[frame.payload.req] || 47, frame.payload.req ],
+                 "\e[36m%s %s" % [ frame.payload.kind, Bech32::Nostr::BareEntity.new('note', frame.payload.id).encode ], # bech32 tlsentity
+                 "\e[%s;1m%s\e[2m %s" % [ frame.payload.verify ? '32' : '31', profiles[pk_hex]['name'] || ' ', pk ],
                  "\e[0m%s" % [ Time.at(frame.payload.created_at) ],
                  frame.payload.content)
           else puts("\e[37m" + frame.inspect) if verbose
