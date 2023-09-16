@@ -50,20 +50,18 @@ class WebSocket
     @io = io
   end
   
+  VERSION = 13
   SEC_ACCEPT_SUFFIX = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
   
-  def greet path,
-            host:, origin: nil
-    origin ||= "http://#{host}"
+  def greet path, host:
     wskey = Base64.encode64(SecureRandom.bytes(16)).gsub(/\s+/, '')
-    @io.write(<<-EOT % [ path, host, origin ])
+    @io.write(<<-EOT % [ path, host, wskey, VERSION ])
 GET %s HTTP/1.1
 Host: %s
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Key: #{wskey}
-Sec-WebSocket-Version: 13
-Origin: %s
+Sec-WebSocket-Key: %s
+Sec-WebSocket-Version: %i
 
 EOT
     @io.flush
@@ -323,12 +321,11 @@ EOT
     io.close
   end
       
-  def self.connect host, port = 80, path = '/', ssl: port == 443, origin: nil
+  def self.connect host, port = 80, path = '/', ssl: port == 443
     if host =~ /^[^ ]+:/
       host = URI.parse(host)
     end
     if URI === host
-      origin ||= host.dup.tap { |u| u.scheme = 'http' }.to_s
       path = host.path
       path = '/' if path.empty?
       ssl = host.scheme == 'wss'
@@ -345,7 +342,7 @@ EOT
     end
     host = host + ':' + port.to_s if port != 80
     ws = self.new(tcp)
-    resp = ws.greet(path, host: host, origin: origin)
+    resp = ws.greet(path, host: host)
     [ ws, resp ]
   end
 end
