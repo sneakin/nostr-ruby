@@ -1,3 +1,5 @@
+#!/usr/bin/env -S bundle exec ruby
+
 require 'socket'
 require 'json'
 require 'openssl'
