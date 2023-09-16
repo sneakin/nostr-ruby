@@ -406,6 +406,8 @@ class NostrSocket < WebSocket
       @payload ||= case event_type
         when 'EVENT' then Message.new(req: js[1], **js[2].symbolize_keys)
         when 'EOSE' then Eose.new(js[1])
+        when 'OK' then Okay.new(js[1], js[2], js[3])
+        when 'NOTICE' then Notice.new(js[1])
         else js
       end
     end    
@@ -416,6 +418,24 @@ class NostrSocket < WebSocket
     
     def initialize req
       @req = req
+    end
+  end
+    
+  class Notice
+    attr_reader :msg
+    
+    def initialize msg
+      @msg = msg
+    end
+  end
+    
+  class Okay
+    attr_reader :event_id, :accepted, :msg
+    
+    def initialize eid, accepted, msg
+      @event_id = eid
+      @accepted = accepted
+      @msg = msg
     end
   end
     
@@ -610,32 +630,59 @@ if $0 == __FILE__
   s, http_resp = NostrSocket.connect(uri)
   puts("\e[0m", *http_resp)
   short_pub = private_key.public_key.hexdigest[0, 8]
-  s.open_req("firehose-#{short_pub}", since: Time.now.to_i - since)
-  s.open_req("self-#{short_pub}",
+  req_fh = "firehose-#{short_pub}"
+  req_self = "self-#{short_pub}"
+  s.open_req(req_fh, since: Time.now.to_i - since)
+  s.open_req(req_self,
              since: Time.now.to_i - since * since,
              authors: [ private_key.public_key.hexdigest ])
+  palette = {
+    req_fh => 43,
+    req_self => 42
+  }
 
   done = false
   data = ''
   post = nil
+  ping_time = nil
+  tries = 0
   while !done
     i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
+    if i == nil
+      puts("\e[0;33mTimed out #{tries}")
+      tries += 1
+      s.ping
+      next
+    end
+    
+    tries = 0
+    
     if i.include?($stdin)
       begin
         line = $stdin.read_nonblock(4096)
         pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
         if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
+          data = data[0..-1]
           blank = "\n\n"
+          post = pre[1..-1]
+        else
+          data += pre
         end
         puts("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
-        data += pre
       rescue IO::EAGAINWaitReadable
+      rescue EOFError
+        done = true
       end while blank == ''
 
       if blank != ''
-        m = NostrSocket::Message.new(kind: 1, created_at: Time.now, content: data)
-        m.sign!(private_key)
-        s.event(**m.to_h)
+        if data =~ /^\/ping/
+          s.ping
+          ping_time = Time.now
+        else
+          m = NostrSocket::Message.new(kind: 1, created_at: Time.now, content: data)
+          m.sign!(private_key)
+          s.event(**m.to_h)
+        end
         data = post || ''
         post = nil
       end
@@ -644,17 +691,24 @@ if $0 == __FILE__
     if i.include?(s.io)
       fr = s.read_frames.to_a
       fr.each do |frame|
-        s.pong(frame) if frame.opcode == :ping
-        done = true if frame.opcode == :close
-        case frame.event_type
-        when 'EVENT' then
-          puts("\e[35m--- %s" % [ frame.payload.req ],
-               "\e[36m%s" % [ Bech32::Nostr::BareEntity.new('note', frame.payload.id).encode ], # bech32 tlsentity
-               "\e[%sm%s" % [ frame.payload.verify ? '32' : '31', Bech32::Nostr::BareEntity.new('npub', frame.payload.pubkey.hexdigest).encode ],
-               "\e[0m%s" % [ Time.at(frame.payload.created_at) ],
-               frame.payload.content)
-        else puts("\e[37m" + frame.inspect) if verbose
-        end if NostrSocket::Frame === frame
+        case frame.opcode
+        when :ping then s.pong(frame)
+        when :close then done = true
+        when :pong then
+          puts("\e[37;1mPong %i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
+          ping_time = nil
+        when :text, :binary then
+          case frame.event_type
+          when 'EVENT' then
+            puts("\e[0;30;%sm--- %s\e[0m" % [ palette[frame.payload.req] || 40, frame.payload.req ],
+                 "\e[36m%s" % [ Bech32::Nostr::BareEntity.new('note', frame.payload.id).encode ], # bech32 tlsentity
+                 "\e[%sm%s" % [ frame.payload.verify ? '32' : '31', Bech32::Nostr::BareEntity.new('npub', frame.payload.pubkey.hexdigest).encode ],
+                 "\e[0m%s" % [ Time.at(frame.payload.created_at) ],
+                 frame.payload.content)
+          else puts("\e[37m" + frame.inspect) if verbose
+          end if NostrSocket::Frame === frame
+        else puts("\e33mUnknown frame type: #{frame.inspect}")
+        end
       end
     end
   end
