@@ -1,0 +1,33 @@
+* Resources
+
+** Protocols
+
+WebSockets :: https://www.rfc-editor.org/rfc/rfc6455
+
+** Nostr
+
+https://github.com/nostr-protocol/nips
+https://github.com/nostr-protocol/nips/blob/master/01.md
+https://www.e2encrypted.com/nostr/nips/
+
+** Crypto
+
+https://medium.com/asecuritysite-when-bob-met-alice/a-bluffers-guide-to-secp256k1-404e423e612
+https://gist.github.com/ostinelli/1770a93d5c01376728c9
+https://gist.github.com/lkdocs/6526465
+https://github.com/DavidEGrayson/secp256k1-rb
+
+** Schnorr
+
+https://github.com/bitcoin/bips/blob/master/bip-0340/reference.py
+https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#user-content-Default_Signing
+https://bips.xyz/340#user-content-public-key-conversion
+https://erlangpunch.substack.com/p/schnorr-signature-scheme-in-erlang
+https://github.com/BitPolito/schnorr-sig
+https://github.com/chaintope/bip-schnorrrb
+
+** Libraries
+
+Ruby :: https://github.com/dtonon/nostr-ruby/blob/master/lib/nostr_ruby.rb
+JS :: https://github.com/nbd-wtf/nostr-tools
+Elixer :: https://github.com/RooSoft/nostr
