@@ -1,4 +1,5 @@
 #!/usr/bin/env -S bundle exec ruby
+# coding: utf-8
 
 require 'socket'
 require 'json'
@@ -10,6 +11,8 @@ require 'schnorr'
 require 'ecdsa'
 require 'securerandom'
 require 'bech32'
+require 'io/console'
+require 'unicode/display_width/string_ext'
 
 module Hex
   def self.dehex str
@@ -40,6 +43,70 @@ class Integer
     bits.times.reduce(0) do |a, i|
       a | (((self >> i) & 1) << (bits-1-i))
     end
+  end
+end
+
+class String
+  def strip_controls
+    gsub(/[\x00-\x1F]+/, '')
+  end
+  
+  def strip_escapes
+    gsub(/(\e\[?[-0-9;]+[a-zA-Z])/, '')
+  end
+
+  def strip_display_only
+    strip_escapes.strip_controls
+  end
+
+  def screen_size
+    # size minus the escapes and control codes with double width chars counted twice
+    #VisualWidth.measure(strip_display_only)
+    strip_escapes.display_width
+  end
+
+  def visual_slice len
+    if screen_size < len
+      [ self, nil ]
+    else
+      part = ''
+      width = 0
+      in_escape = false
+      each_char do |c|
+        if width >= len
+          break
+        end
+        if c == "\e"
+          in_escape = true
+        elsif in_escape && (Range.new('a'.ord, 'z'.ord).include?(c.ord) || Range.new('A'.ord, 'Z'.ord).include?(c.ord))
+          in_escape = false
+        elsif !in_escape
+          width += Unicode::DisplayWidth.of(c)
+        end
+        part += c
+      end
+      return [ part, self[part.size..-1] ]
+    end
+  end
+  
+  def each_visual_slice n, &cb
+    return to_enum(__method__, n) unless cb
+
+    if screen_size < n
+      cb.call(self)
+    else
+      rest = self
+      begin
+        sl, rest = rest.visual_slice(n)
+        cb.call(sl)
+      end while(rest && !rest.empty?)
+    end
+
+    self
+  end
+  
+  def truncate len
+    visual_slice(len).first
   end
 end
 
@@ -616,7 +683,92 @@ class NostrSocket < WebSocket
         cb.call(frame)
       end
     end
-  end  
+  end
+end
+
+module Terminstry
+  def self.tty_size
+    raise 'haha' if ENV['TTYSIZE'] == '1'
+    lines, cols = IO.console.winsize
+    [ cols, lines ]
+  rescue
+    [ ENV.fetch('COLUMNS', 80).to_i, ENV.fetch('LINES', 24).to_i ]
+  end
+
+  def self.tabbox title, content, size: tty_size, bg: 9, fg: 9, borderbg: 9, borderfg: fg, titlefg: fg
+    border = "\e[0;%i;%im" % [ 30 + borderfg, 40 + borderbg ]
+    color = "\e[0;%i;%im" % [ 30 + fg, 40 + bg ]
+    title_color = "\e[0;%i;%im" % [ 30 + titlefg, 40 + bg ]
+    bordcol = "\e[0;%i;%im" % [ 30 + borderfg, 40 + bg ]
+    title = title.truncate(size[0] - 4)
+    s = []
+    s << "\e[0m%s%s\n" % [ border, '▁' * (title.screen_size + 4) ]
+    s << "%s▌%s \e[1m%s \e[0m%s▐%s%s\e[0m\n" % [ bordcol, title_color, title, bordcol, border, '▁' * [ 0, (size[0] - title.screen_size - 4) ].max ]
+    #parts = content.scan(/[^\n]{0,#{size[0] - 5}}\n?/)
+    #$stderr.puts(parts.to_a.inspect)
+    parts = []
+    content.split("\n").each do |l|
+      #VisualWidth.each_width(l, size[0] - 5) do |p|
+      l.each_visual_slice(size[0] - 4) do |p|
+        parts << p
+      end
+    end
+    s += parts.collect do |l|
+      l = l.rstrip
+      "%s▌%s %s%s%s▐\e[0m\n" % [ bordcol, color, l, ' ' * [ (size[0] - 3 - l.screen_size), 0 ].max, bordcol ]
+    end
+    s << '%s%s' % [ border, '▔' * size[0] ]
+    s << "\e[0m"
+    s.join
+  end
+end
+
+class Presenter
+  attr_accessor :io
+
+  def initialize io
+    @io = io
+  end
+
+  def msg_panel title, content, **opts
+    @io.puts(Terminstry.tabbox(title, content, **opts))
+    self
+  end
+
+  def info subject, msg = nil, **opts
+    msg_panel(msg ? subject : 'Info', msg || subject, fg: 2, **opts)
+  end
+  
+  def warning subject, msg = nil, **opts
+    msg_panel(msg ? subject : 'Warning', msg || subject, fg: 3, **opts)
+  end
+
+  def notice msg
+    msg_panel('Notice', msg, fg: 6)
+  end
+  
+  def note n, profile:, **opts
+    pk_hex = n.pubkey.hexdigest
+    pk = Bech32::Nostr::BareEntity.new('npub', pk_hex).encode
+    msg_panel("%s %s %s" % [ n.kind, (profile['name'] || '').strip_display_only, n.req ],
+              "%s\n" % [ Bech32::Nostr::BareEntity.new('note', n.id).encode ] +
+              "\e[1;%sm%s\n" % [ n.verify ? '32' : '31', pk ] +
+              "%s\n" % [ Time.at(n.created_at) ] +
+              n.content.strip_display_only,
+              **opts)
+  end
+
+  def profile pro, **opts
+    msg_panel("Profile: %s" % [ (pro['name'] || '???').strip_display_only ],
+              pro.collect { |k, v| "\e[1m%16s\e[0m %s\n" % [ k, v.to_s.strip_display_only ] }.join,
+              **opts)
+  end
+  
+  def log *lines
+    lines[0] = "\e[0m" + lines[0]
+    @io.puts(*lines)
+    self
+  end
 end
 
 if $0 == __FILE__
@@ -640,11 +792,12 @@ if $0 == __FILE__
              since: Time.now.to_i - since * since,
              authors: [ private_key.public_key.hexdigest ])
   palette = {
-    req_fh => 43,
-    req_self => 42
+    req_fh => 6,
+    req_self => 5
   }
   profiles = Hash.new { |h, k| h[k] = Hash.new }
 
+  pres = Presenter.new($stdout)
   done = false
   data = ''
   post = nil
@@ -653,7 +806,7 @@ if $0 == __FILE__
   while !done
     i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
     if i == nil
-      puts("\e[0;33mTimed out #{tries}")
+      pres.warning("Timed out #{tries}")
       tries += 1
       s.ping
       next
@@ -672,7 +825,7 @@ if $0 == __FILE__
         else
           data += pre
         end
-        puts("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
+        pres.log("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
       rescue IO::EAGAINWaitReadable
       rescue EOFError
         done = true
@@ -699,34 +852,33 @@ if $0 == __FILE__
         when :ping then s.pong(frame)
         when :close then done = true
         when :pong then
-          puts("\e[37;1mPong %i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
+          pres.info("Pong", "%i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
           ping_time = nil
         when :text, :binary then
           case frame.event_type
           when 'EOSE' then
-            puts("\e[31mEOSE #{frame.payload.req}")
+            pres.log("EOSE #{frame.payload.req}")
+          when 'NOTICE' then
+            pres.notice(frame.payload.msg)
           when 'EVENT' then
             pk_hex = frame.payload.pubkey.hexdigest
-            pk = Bech32::Nostr::BareEntity.new('npub', pk_hex).encode
             if frame.payload.kind == 0 && frame.payload.req =~ /^profile/
               profiles[pk_hex].merge!(JSON.load(frame.payload.content))
               s.close_req(frame.payload.req)
+              pres.profile(profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
             else
-            if profiles[pk_hex].empty?
-              rn = "profile-#{pk_hex[0,8]}"
-              profiles[pk_hex][:req_id] = rn
-              puts("\e[1;31mREQ #{rn}")
-              s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1)
+              if profiles[pk_hex].empty?
+                rn = "profile-#{pk_hex[0,8]}"
+                profiles[pk_hex][:req_id] = rn
+                pres.log("REQ #{rn}")
+                s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1)
+              end
+              pres.note(frame.payload, profile: profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
             end
-            end
-            puts("\e[0;30;%sm--- %s\e[0m" % [ palette[frame.payload.req] || 47, frame.payload.req ],
-                 "\e[36m%s %s" % [ frame.payload.kind, Bech32::Nostr::BareEntity.new('note', frame.payload.id).encode ], # bech32 tlsentity
-                 "\e[%s;1m%s\e[2m %s" % [ frame.payload.verify ? '32' : '31', profiles[pk_hex]['name'] || ' ', pk ],
-                 "\e[0m%s" % [ Time.at(frame.payload.created_at) ],
-                 frame.payload.content)
-          else puts("\e[37m" + frame.inspect) if verbose
+          else pres.info("Unknown event", frame.inspect, fg: 3, bg: 0) if verbose
           end if NostrSocket::Frame === frame
-        else puts("\e33mUnknown frame type: #{frame.inspect}")
+        else pres.warn("Unknown frame type", frame.inspect,
+                       fg: 0, bg: 3)
         end
       end
     end

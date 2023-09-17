@@ -15,5 +15,7 @@ Gem::Specification.new do |s|
   s.require_paths = [ 'lib' ]
   s.add_runtime_dependency 'rake'
   s.add_dependency 'bech32'
+  s.add_dependency 'unicode-display_width'
+  s.add_dependency 'unicode-emoji'
   #s.add_dependency 'schnorr'
 end
