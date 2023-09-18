@@ -13,6 +13,8 @@ require 'securerandom'
 require 'bech32'
 require 'io/console'
 require 'unicode/display_width/string_ext'
+require 'forwardable'
+require 'optionparser'
 
 module Hex
   def self.dehex str
@@ -531,6 +533,10 @@ class NostrSocket < WebSocket
       ECDSA::Format::IntegerOctetString.encode(@secret, 32)
     end
     
+    def to_bech32
+      Bech32::Nostr::BareEntity.new('nsec', hexdigest).encode
+    end
+    
     def sign msg
       Schnorr.sign(msg, digest, SecureRandom.bytes(32)).encode
     end
@@ -594,6 +600,10 @@ class NostrSocket < WebSocket
     
     def digest
       ECDSA::Format::PointOctetString.encode(@key, compression: true)[-32,32]
+    end
+
+    def to_bech32
+      Bech32::Nostr::BareEntity.new('npub', hexdigest).encode
     end
     
     def make_ssl_key bytes
@@ -668,12 +678,20 @@ class NostrSocket < WebSocket
       @pubkey.verify(Hex.dehex(id || hexdigest), Hex.dehex(@sig))
     end
   end
+
+  extend Forwardable
+  attr_reader :websocket
+  def_delegators :websocket, :io
+  
+  def initialize websocket
+    @websocket = websocket
+  end
   
   def read_frames &cb
     return to_enum(__method__) unless cb
     
-    super do |frame|
-      if frame.opcode == :text
+    websocket.read_frames do |frame|
+      if frame.opcode == :text || frame.opcode == :binary
         if frame.payload[0] == '[' && frame.payload[-1] == ']'
           cb.call(Frame.new(frame))
         else
@@ -683,6 +701,11 @@ class NostrSocket < WebSocket
         cb.call(frame)
       end
     end
+  end
+
+  def self.connect *args, **opts
+    ws, resp = WebSocket.connect(*args, **opts)
+    return new(ws), resp
   end
 end
 
@@ -774,29 +797,85 @@ end
 if $0 == __FILE__
   # todo one shot REQs to get profile names
   
-  uri = ARGV[0] || 'wss://nos.lol/'
-  since = (ARGV[1] || 60).to_i
+  uri = nil
+  since = 5
+  self_since = 60*60
   verbose = ENV.fetch('VERBOSE', '0') != '0'
-  private_key = NostrSocket::PrivateKey.load(ENV['KEY']) || NostrSocket::PrivateKey.generate
+  private_key = ENV['KEY']
+  show_profiles = false
+  authors = []
+  do_firehose = true
+  reqs = []
   
-  puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, Bech32::Nostr::BareEntity.new('nsec', private_key.hexdigest).encode ])
-  puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, Bech32::Nostr::BareEntity.new('npub', private_key.public_key.hexdigest).encode ])
+  hosts = OptionParser.new do |o|
+    o.on('--since SECONDS', Integer) do |v|
+      since = v
+    end
+    o.on('--self-since SECONDS', Integer) do |v|
+      self_since = v
+    end
+    o.on('-v', '--verbose') do
+      verbose = true
+    end
+    o.on('-k', '--private-key KEY') do |v|
+      private_key = v
+    end
+    o.on('--show-profiles') do
+      show_profiles = true
+    end
+    o.on('--req-author KEY') do |v|
+      authors << NostrSocket::PublicKey.load(v)
+    end
+    o.on('--no-firehose') do
+      do_firehose = false
+    end
+    o.on('--req JSON') do |v|
+      js = JSON.load(v)
+      # todo do this with a function?
+      # todo multiple filters in an array
+      js['authors'] = js['authors'].collect do |a|
+        case a
+        when /^npub/ then NostrSocket::PublicKey.load(a).hexdigest
+        else a
+        end
+      end
+      reqs << js
+    end
+  end.parse!(ARGV)
 
-  s, http_resp = NostrSocket.connect(uri)
-  puts("\e[0m", *http_resp)
+  uri = hosts[0] || 'wss://nos.lol/'
+  private_key = NostrSocket::PrivateKey.load(private_key) || NostrSocket::PrivateKey.generate
+  
+  puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, private_key.to_bech32 ])
+  puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, private_key.public_key.to_bech32 ])
+
   short_pub = private_key.public_key.hexdigest[0, 8]
   req_fh = "firehose-#{short_pub}"
   req_self = "self-#{short_pub}"
-  s.open_req(req_fh, since: Time.now.to_i - since)
-  s.open_req(req_self,
-             since: Time.now.to_i - since * since,
-             authors: [ private_key.public_key.hexdigest ])
   palette = {
+    info: 7,
     req_fh => 6,
-    req_self => 5
+    req_self => 5,
+    "authors" => 4
   }
-  profiles = Hash.new { |h, k| h[k] = Hash.new }
 
+  s, http_resp = NostrSocket.connect(uri)
+  puts("\e[0m", *http_resp)
+  if do_firehose
+    s.open_req(req_fh, since: Time.now.to_i - since)
+  end
+  s.open_req(req_self,
+             since: Time.now.to_i - self_since,
+             authors: [ private_key.public_key.hexdigest ])
+  s.open_req("authors",
+             since: Time.now.to_i - since,
+             authors: authors.collect(&:hexdigest))
+  open_reqs = reqs.each.with_index.collect do |js, n|
+    puts("Opening req: #{js.inspect}") if verbose
+    s.open_req("req-#{n}", **js)
+  end
+  
+  profiles = Hash.new { |h, k| h[k] = Hash.new }
   pres = Presenter.new($stdout)
   done = false
   data = ''
@@ -865,7 +944,9 @@ if $0 == __FILE__
             if frame.payload.kind == 0 && frame.payload.req =~ /^profile/
               profiles[pk_hex].merge!(JSON.load(frame.payload.content))
               s.close_req(frame.payload.req)
-              pres.profile(profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
+              if show_profiles
+                pres.profile(profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
+              end
             else
               if profiles[pk_hex].empty?
                 rn = "profile-#{pk_hex[0,8]}"
@@ -875,7 +956,7 @@ if $0 == __FILE__
               end
               pres.note(frame.payload, profile: profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
             end
-          else pres.info("Unknown event", frame.inspect, fg: 3, bg: 0) if verbose
+          else pres.info("Unknown event", frame.inspect, fg: palette[:info]) if verbose
           end if NostrSocket::Frame === frame
         else pres.warn("Unknown frame type", frame.inspect,
                        fg: 0, bg: 3)
