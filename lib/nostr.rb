@@ -846,7 +846,8 @@ if $0 == __FILE__
 
   uri = hosts[0] || 'wss://nos.lol/'
   private_key = NostrSocket::PrivateKey.load(private_key) || NostrSocket::PrivateKey.generate
-  
+
+  puts("\e[1;31m%s" % [ uri ])
   puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, private_key.to_bech32 ])
   puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, private_key.public_key.to_bech32 ])
 
@@ -938,24 +939,38 @@ if $0 == __FILE__
           case frame.event_type
           when 'EOSE' then
             pres.log("EOSE #{frame.payload.req}")
+            if frame.payload.req =~ /\Aprofile/
+              s.close_req(frame.payload.req)
+            end
+          when 'OK' then
+            if frame.payload.accepted
+              pres.log("Okay #{frame.payload.inspect}") if verbose
+            else
+              pres.warn("Warning", frame.payload.msg)
+            end
           when 'NOTICE' then
             pres.notice(frame.payload.msg)
           when 'EVENT' then
             pk_hex = frame.payload.pubkey.hexdigest
-            if frame.payload.kind == 0 && frame.payload.req =~ /^profile/
+            if frame.payload.kind == 0 && frame.payload.req =~ /\Aprofile/
               profiles[pk_hex].merge!(JSON.load(frame.payload.content))
+              profiles[pk_hex][:updated_at] = Time.now
               s.close_req(frame.payload.req)
               if show_profiles
-                pres.profile(profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
+                pres.profile(profiles[pk_hex],
+                             borderfg: palette[frame.payload.req] || 7)
               end
             else
               if profiles[pk_hex].empty?
                 rn = "profile-#{pk_hex[0,8]}"
                 profiles[pk_hex][:req_id] = rn
+                profiles[pk_hex][:req_at] = Time.now
                 pres.log("REQ #{rn}")
-                s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1)
+                s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1, until: Time.now.to_i + 120)
               end
-              pres.note(frame.payload, profile: profiles[pk_hex], borderfg: palette[frame.payload.req] || 7) # bg: palette[frame.payload.req] || 7, fg: 0, borderfg: 7)
+              pres.note(frame.payload,
+                        profile: profiles[pk_hex],
+                        borderfg: palette[frame.payload.req] || 7)
             end
           else pres.info("Unknown event", frame.inspect, fg: palette[:info]) if verbose
           end if NostrSocket::Frame === frame
