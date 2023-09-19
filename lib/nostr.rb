@@ -545,13 +545,14 @@ class NostrSocket < WebSocket
       Schnorr.valid_sig?(msg, digest, sig)
     end
 
-    def self.generate group = ECDSA::Group::Secp256k1
+    def self.generate group = ECDSA::Group::Secp256k1, even_only: true
       priv = nil
       pub = nil
       begin
-        priv = 1 + SecureRandom.random_number(group.order - 1)
+        #priv = 1 + SecureRandom.random_number(group.order - 1)
+        priv = SecureRandom.random_number(group.order - 1)
         pub = PublicKey.from_private(priv, group)
-      end until pub.even?
+      end until (even_only && pub.even?) || !even_only
       
       self.new(priv, pub)
     end
