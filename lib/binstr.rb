@@ -1,7 +1,9 @@
 #!/usr/bin/env -S bundle exec ruby
 # coding: utf-8
 
-require_relative 'nostr'
+require 'sg/web_socket'
+require 'sg/hex'
+require 'sg/nostr'
 
 class Binstr
   attr_reader :websocket
@@ -30,7 +32,7 @@ class Binstr
       end
       
       def valid?
-        NostrSocket::PublicKey.new(Hex.hex(pubkey)).verify(canonicalize.pack, sig)
+        SG::Nostr::PublicKey.new(SG::Hex.hex(pubkey)).verify(canonicalize.pack, sig)
       end
 
       def sign key
@@ -103,7 +105,7 @@ class BinstrForkServer
 
   def accept_connection
     io = @serv_io.accept
-    ws = WebSocket.new(io)
+    ws = SG::WebSocket.new(io)
     puts("#{@id}: Accepted #{io.inspect}")
     framer = Binstr.new(ws)
     begin
@@ -159,7 +161,7 @@ class BinstrServer
   class Client
     def initialize io, out_queue
       @io = io
-      @ws = WebSocket.new(io)
+      @ws = SG::WebSocket.new(io)
       @framer = Binstr.new(@ws)
       @out_queue = out_queue
       @to_send = Queue.new
@@ -176,7 +178,7 @@ class BinstrServer
             @framer.send_msg('error', "Invalid signature")
           end
         end
-      rescue EOFError, Errno::Error
+      rescue EOFError, Errno::ECONNRESET
         @ws.close
       end
     end

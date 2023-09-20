@@ -1,0 +1,242 @@
+#!/usr/bin/env -S bundle exec ruby
+
+require_relative '../lib/sg/nostr'
+
+require 'sg/terminstry'
+
+class Presenter
+  attr_accessor :io
+
+  def initialize io
+    @io = io
+  end
+
+  def msg_panel title, content, **opts
+    @io.puts(SG::Terminstry.tabbox(title, content, **opts))
+    self
+  end
+
+  def info subject, msg = nil, **opts
+    msg_panel(msg ? subject : 'Info', msg || subject, fg: 2, **opts)
+  end
+  
+  def warning subject, msg = nil, **opts
+    msg_panel(msg ? subject : 'Warning', msg || subject, fg: 3, **opts)
+  end
+
+  def notice msg
+    msg_panel('Notice', msg, fg: 6)
+  end
+  
+  def note n, profile:, **opts
+    pk_hex = n.pubkey.hexdigest
+    pk = Bech32::Nostr::BareEntity.new('npub', pk_hex).encode
+    msg_panel("%s %s %s" % [ n.kind, (profile['name'] || '').strip_display_only, n.req ],
+              "%s\n" % [ Bech32::Nostr::BareEntity.new('note', n.id).encode ] +
+              "\e[1;%sm%s\n" % [ n.verify ? '32' : '31', pk ] +
+              "%s\n" % [ Time.at(n.created_at) ] +
+              n.content.strip_display_only,
+              **opts)
+  end
+
+  def profile pro, **opts
+    msg_panel("Profile: %s" % [ (pro['name'] || '???').strip_display_only ],
+              pro.collect { |k, v| "\e[1m%16s\e[0m %s\n" % [ k, v.to_s.strip_display_only ] }.join,
+              **opts)
+  end
+  
+  def log *lines
+    lines[0] = "\e[0m" + lines[0]
+    @io.puts(*lines)
+    self
+  end
+end
+
+if $0 == __FILE__
+  # todo one shot REQs to get profile names
+  
+  uri = nil
+  since = 5
+  self_since = 60*60
+  verbose = ENV.fetch('VERBOSE', '0') != '0'
+  private_key = ENV['KEY']
+  show_profiles = false
+  authors = []
+  do_firehose = true
+  reqs = []
+  
+  hosts = OptionParser.new do |o|
+    o.on('--since SECONDS', Integer) do |v|
+      since = v
+    end
+    o.on('--self-since SECONDS', Integer) do |v|
+      self_since = v
+    end
+    o.on('-v', '--verbose') do
+      verbose = true
+    end
+    o.on('-k', '--private-key KEY') do |v|
+      private_key = v
+    end
+    o.on('--show-profiles') do
+      show_profiles = true
+    end
+    o.on('--req-author KEY') do |v|
+      authors << SG::Nostr::PublicKey.load(v)
+    end
+    o.on('--no-firehose') do
+      do_firehose = false
+    end
+    o.on('--req JSON') do |v|
+      js = JSON.load(v)
+      # todo do this with a function?
+      # todo multiple filters in an array
+      js['authors'] = js['authors'].collect do |a|
+        case a
+        when /^npub/ then SG::Nostr::PublicKey.load(a).hexdigest
+        else a
+        end
+      end
+      reqs << js
+    end
+  end.parse!(ARGV)
+
+  uri = hosts[0] || 'wss://nos.lol/'
+  private_key = SG::Nostr::PrivateKey.load(private_key) || SG::Nostr::PrivateKey.generate
+
+  puts("\e[1;31m%s" % [ uri ])
+  puts("\e[36;1mKey: %s %s" % [ private_key.hexdigest, private_key.to_bech32 ])
+  puts("\e[36;1mPub: %s %s" % [ private_key.public_key.hexdigest, private_key.public_key.to_bech32 ])
+
+  short_pub = private_key.public_key.hexdigest[0, 8]
+  req_fh = "firehose-#{short_pub}"
+  req_self = "self-#{short_pub}"
+  palette = {
+    info: 7,
+    req_fh => 6,
+    req_self => 5,
+    "authors" => 4
+  }
+
+  s, http_resp = SG::Nostr::Connection.connect(uri)
+  puts("\e[0m", *http_resp)
+  if do_firehose
+    s.open_req(req_fh, since: Time.now.to_i - since)
+  end
+  s.open_req(req_self,
+             since: Time.now.to_i - self_since,
+             authors: [ private_key.public_key.hexdigest ])
+  s.open_req("authors",
+             since: Time.now.to_i - since,
+             authors: authors.collect(&:hexdigest))
+  open_reqs = reqs.each.with_index.collect do |js, n|
+    puts("Opening req: #{js.inspect}") if verbose
+    s.open_req("req-#{n}", **js)
+  end
+  
+  profiles = Hash.new { |h, k| h[k] = Hash.new }
+  pres = Presenter.new($stdout)
+  done = false
+  data = ''
+  post = nil
+  ping_time = nil
+  tries = 0
+  while !done
+    i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
+    if i == nil
+      pres.warning("Timed out #{tries}")
+      tries += 1
+      s.ping
+      next
+    end
+    
+    tries = 0
+    
+    if i.include?($stdin)
+      begin
+        line = $stdin.read_nonblock(4096)
+        pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
+        if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
+          data = data[0..-1]
+          blank = "\n\n"
+          post = pre[1..-1]
+        else
+          data += pre
+        end
+        pres.log("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
+      rescue IO::EAGAINWaitReadable
+      rescue EOFError
+        done = true
+      end while blank == ''
+
+      if blank != ''
+        if data =~ /^\/ping/
+          s.ping
+          ping_time = Time.now
+        else
+          m = SG::Nostr::Message.new(kind: 1, created_at: Time.now, content: data)
+          m.sign!(private_key)
+          s.event(**m.to_h)
+        end
+        data = post || ''
+        post = nil
+      end
+    end
+
+    if i.include?(s.io)
+      fr = s.read_frames.to_a
+      fr.each do |frame|
+        case frame.opcode
+        when :ping then s.pong(frame)
+        when :close then done = true
+        when :pong then
+          pres.info("Pong", "%i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
+          ping_time = nil
+        when :text, :binary then
+          case frame.event_type
+          when 'EOSE' then
+            pres.log("EOSE #{frame.payload.req}")
+            if frame.payload.req =~ /\Aprofile/
+              s.close_req(frame.payload.req)
+            end
+          when 'OK' then
+            if frame.payload.accepted != false
+              pres.log("Okay #{frame.payload.inspect}") if verbose
+            else
+              pres.warning("Rejected", "%s\n%s" % [ frame.payload.msg, frame.inspect ])
+            end
+          when 'NOTICE' then
+            pres.notice(frame.payload.msg)
+          when 'EVENT' then
+            pk_hex = frame.payload.pubkey.hexdigest
+            if frame.payload.kind == 0 && frame.payload.req =~ /\Aprofile/
+              profiles[pk_hex].merge!(JSON.load(frame.payload.content))
+              profiles[pk_hex][:updated_at] = Time.now
+              s.close_req(frame.payload.req)
+              if show_profiles
+                pres.profile(profiles[pk_hex],
+                             borderfg: palette[frame.payload.req] || 7)
+              end
+            else
+              if profiles[pk_hex].empty?
+                rn = "profile-#{pk_hex[0,8]}"
+                profiles[pk_hex][:req_id] = rn
+                profiles[pk_hex][:req_at] = Time.now
+                pres.log("REQ #{rn}")
+                s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1, until: Time.now.to_i + 120)
+              end
+              pres.note(frame.payload,
+                        profile: profiles[pk_hex],
+                        borderfg: palette[frame.payload.req] || 7)
+            end
+          else pres.info("Unknown event", frame.inspect, fg: palette[:info]) if verbose
+          end if SG::Nostr::Frame === frame
+        else pres.warn("Unknown frame type", frame.inspect,
+                       fg: 0, bg: 3)
+        end
+      end
+    end
+  end
+
+  s.close
+end
