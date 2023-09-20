@@ -373,6 +373,10 @@ EOT
     send_frame(Frame.new(opcode: :text, mask: rand(0xFFFFFFFF), payload: payload))
   end
   
+  def send_binary payload
+    send_frame(Frame.new(opcode: :binary, mask: rand(0xFFFFFFFF), payload: payload))
+  end
+  
   def ping
     send_frame(Frame.new(opcode: :ping, mask: rand(0xFFFFFFFF)))
   end
@@ -983,3 +987,4 @@ if $0 == __FILE__
 
   s.close
 end
+
