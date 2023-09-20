@@ -99,11 +99,11 @@ require 'thread'
 
 class BinstrServer
   class Client
-    def initialize io, out_queue
+    def initialize io, up_queue
       @io = io
       @ws = SG::WebSocket.new(io)
       @framer = Binstr.new(@ws)
-      @out_queue = out_queue
+      @up_queue = up_queue
       @to_send = Queue.new
     end
 
@@ -113,7 +113,7 @@ class BinstrServer
           @ws.pong(f) if f.opcode == :ping
           next unless Binstr::Frame === f
           if f.payload.valid?
-            @out_queue << f
+            @up_queue << f
           else
             @framer.send_msg('error', "Invalid signature")
           end
@@ -132,7 +132,7 @@ class BinstrServer
     end
 
     def has_output?
-      @to_send.empty?
+      !@to_send.empty?
     end
 
     def process_output
@@ -147,25 +147,30 @@ class BinstrServer
   end
   
   def initialize io
-    @io = io
+    @listeners = [ io ]
     @clients = {}
     @queue = Queue.new
   end
 
   def process timeout = nil
-    i,o,e = IO.select([@io, *@clients.keys],
-                      @clients.collect { |cio, c| cio if c.has_output? },
+    i,o,e = IO.select(@listeners + @clients.keys,
+                      @clients.collect { |cio, c| cio if c.has_output? }.reject(&:nil?),
                       [], timeout)
     i.each do |ci|
-      if ci == @io
-        sock = @io.accept
+      if cl= @clients[ci]
+        cl.process_input
+      elsif listener= @listeners.find(ci).first
+        sock = listener.accept
         @clients[sock] = Client.new(sock, @queue)
       end
-      cl = @clients[ci]
-      if cl
-        cl.process_input
-      end
     end if i
+
+    o.each do |co|
+      cl = @clients[co]
+      cl.process_output if cl
+    end if o
+
+    @clients.delete_if { |_, c| c.closed? }
 
     while !@queue.empty?
       f = @queue.pop
@@ -174,12 +179,6 @@ class BinstrServer
       end
     end
 
-    o.each do |co|
-      cl = @clients[co]
-      cl.process_output if cl
-    end if o
-
-    @clients.delete_if { |_, c| c.closed? }
   end
 
   def serve
