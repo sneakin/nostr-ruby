@@ -95,66 +95,6 @@ class Binstr
   end
 end
 
-class BinstrForkServer
-  def initialize srv, workers: 4
-    @serv_io = srv
-    @max_workers = workers
-    @workers = []
-    @id = nil
-  end
-
-  def accept_connection
-    io = @serv_io.accept
-    ws = SG::WebSocket.new(io)
-    puts("#{@id}: Accepted #{io.inspect}")
-    framer = Binstr.new(ws)
-    begin
-      framer.read_frames do |f|
-        puts(f.payload.inspect)
-        ws.pong(f) if f.opcode == :ping
-        next unless Binstr::Frame === f
-        puts(@id, f.payload.valid?, '')
-        if f.payload.valid?
-          framer.send_frame(f)
-        end
-      end
-    rescue EOFError
-    end until io.closed?
-  end
-
-  def spawn_worker id = 0
-    @workers << Process.fork do
-      @id = id
-      accept_connection
-    end
-  end
-
-  def cleanup
-    @workers.each { |p| Process.kill('QUIT', p) }
-    while @workers != []
-      pid = Process.wait
-      @workers.delete(pid) if pid
-    end
-  end
-  
-  def serve
-    @max_workers.times do |n|
-      spawn_worker(n)
-    end
-    trap('INT') { cleanup; exit(0) }
-    trap('QUIT') { cleanup; exit(0) }
-    at_exit { cleanup }
-    while pid = Process.wait
-      if @workers.include?(pid)
-        status = $?
-        puts("Exit #{pid} #{status}")
-        @workers.delete(pid)
-        spawn_worker(Time.now.to_i) if status.exitstatus != 0
-      end
-    end
-  end
-end
-
 require 'thread'
 
 class BinstrServer
