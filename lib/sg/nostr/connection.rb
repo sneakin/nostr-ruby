@@ -3,7 +3,7 @@ module SG::Nostr
   class Connection
     extend Forwardable
     attr_reader :websocket
-    def_delegators :websocket, :io, :close, :closed?
+    def_delegators :websocket, :io, :close, :closed?, :pong, :ping
     
     def initialize websocket
       @websocket = websocket
