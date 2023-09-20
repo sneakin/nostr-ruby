@@ -96,7 +96,7 @@ if $0 == __FILE__
         when /^npub/ then SG::Nostr::PublicKey.load(a).hexdigest
         else a
         end
-      end
+      end if js['authors']
       reqs << js
     end
   end.parse!(ARGV)
