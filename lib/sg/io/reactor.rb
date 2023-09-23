@@ -150,8 +150,18 @@ class SG::IO::Reactor
     @done = false
   end
 
-  def add_input actor, io = actor.io
-    @inputs.add(actor, io)
+  def add_input actor_or_io, io = nil, &cb
+    add_io(@inputs, actor_or_io, io, BasicInput, &cb)
+  end
+
+  def add_io set, actor_or_io, io, actor_kind, &cb
+    if actor_or_io && cb
+      set.add(actor_kind.new(actor_or_io, &cb), actor_or_io)
+    elsif actor_or_io
+      set.add(actor, io || actor.io)
+    else
+      raise ArgumentError.new("Expected an IO and block, or Actor and IO.")
+    end
   end
 
   def del_input actor
@@ -163,7 +173,7 @@ class SG::IO::Reactor
   end
   
   def add_output actor, io = actor.io
-    @outputs.add(actor, io)
+    add_io(@outputs, actor, io, BasicOutput, &cb)
   end
 
   def del_output actor
@@ -171,7 +181,7 @@ class SG::IO::Reactor
   end
 
   def add_err actor, io = actor.io
-    @errs.add(actor, io)
+    add_io(@errs, actor, io, BasicOutput, &cb)
   end
 
   def del_err actor
@@ -186,7 +196,7 @@ class SG::IO::Reactor
     @idlers.delete(fn)
   end
 
-  def process timeout = nil
+  def process timeout: nil
     i,o,e = ::IO.select(@inputs.needs_processing.keys,
                         @outputs.needs_processing.keys,
                         @errs.needs_processing.keys,
@@ -211,14 +221,14 @@ class SG::IO::Reactor
     @done
   end
   
-  def serve! timeout, &cb
+  def serve! timeout: nil, &cb
     if cb
       until done?
-        process(timeout)
+        process(timeout: timeout)
         cb.call
       end
     else
-      process until done?
+      process(timeout: timeout) until done?
     end
   end
 end

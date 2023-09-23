@@ -2,6 +2,7 @@
 
 require_relative '../lib/sg/nostr'
 
+require 'sg/io/reactor'
 require 'sg/terminstry'
 
 class Presenter
@@ -136,107 +137,101 @@ if $0 == __FILE__
   
   profiles = Hash.new { |h, k| h[k] = Hash.new }
   pres = Presenter.new($stdout)
-  done = false
   data = ''
   post = nil
   ping_time = nil
   tries = 0
-  while !done
-    i,o,e = IO.select([$stdin, s.io], [], [], 60*60)
-    if i == nil
-      pres.warning("Timed out #{tries}")
-      tries += 1
-      s.ping
-      next
-    end
-    
-    tries = 0
-    
-    if i.include?($stdin)
-      begin
-        line = $stdin.read_nonblock(4096)
-        pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
-        if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
-          data = data[0..-1]
-          blank = "\n\n"
-          post = pre[1..-1]
-        else
-          data += pre
-        end
-        pres.log("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
-      rescue IO::EAGAINWaitReadable
-      rescue EOFError
-        done = true
-      end while blank == ''
 
-      if blank != ''
-        if data =~ /^\/ping/
-          s.ping
-          ping_time = Time.now
-        else
-          m = SG::Nostr::Message.new(kind: 1, created_at: Time.now, content: data)
-          m.sign!(private_key)
-          s.event(**m.to_h)
-        end
-        data = post || ''
-        post = nil
+  reactor = SG::IO::Reactor.new
+  reactor.add_input($stdin) do
+    begin
+      line = $stdin.read_nonblock(4096)
+      pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
+      if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
+        data = data[0..-1]
+        blank = "\n\n"
+        post = pre[1..-1]
+      else
+        data += pre
       end
-    end
+      pres.log("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
+    rescue IO::EAGAINWaitReadable
+    rescue EOFError
+      reactor.done!
+    end while blank == ''
 
-    if i.include?(s.io)
-      fr = s.read_frames.to_a
-      fr.each do |frame|
-        case frame.opcode
-        when :ping then s.pong(frame)
-        when :close then done = true
-        when :pong then
-          pres.info("Pong", "%i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
-          ping_time = nil
-        when :text, :binary then
-          case frame.event_type
-          when 'EOSE' then
-            pres.log("EOSE #{frame.payload.req}")
-            if frame.payload.req =~ /\Aprofile/
-              s.close_req(frame.payload.req)
-            end
-          when 'OK' then
-            if frame.payload.accepted != false
-              pres.log("Okay #{frame.payload.inspect}") if verbose
-            else
-              pres.warning("Rejected", "%s\n%s" % [ frame.payload.msg, frame.inspect ])
-            end
-          when 'NOTICE' then
-            pres.notice(frame.payload.msg)
-          when 'EVENT' then
-            pk_hex = frame.payload.pubkey.hexdigest
-            if frame.payload.kind == 0 && frame.payload.req =~ /\Aprofile/
-              profiles[pk_hex].merge!(JSON.load(frame.payload.content))
-              profiles[pk_hex][:updated_at] = Time.now
-              s.close_req(frame.payload.req)
-              if show_profiles
-                pres.profile(profiles[pk_hex],
-                             borderfg: palette[frame.payload.req] || 7)
-              end
-            else
-              if profiles[pk_hex].empty?
-                rn = "profile-#{pk_hex[0,8]}"
-                profiles[pk_hex][:req_id] = rn
-                profiles[pk_hex][:req_at] = Time.now
-                pres.log("REQ #{rn}")
-                s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1, until: Time.now.to_i + 120)
-              end
-              pres.note(frame.payload,
-                        profile: profiles[pk_hex],
-                        borderfg: palette[frame.payload.req] || 7)
-            end
-          else pres.info("Unknown event", frame.inspect, fg: palette[:info]) if verbose
-          end if SG::Nostr::Frame === frame
-        else pres.warn("Unknown frame type", frame.inspect,
-                       fg: 0, bg: 3)
-        end
+    if blank != ''
+      if data =~ /^\/ping/
+        s.ping
+        ping_time = Time.now
+      else
+        m = SG::Nostr::Message.new(kind: 1, created_at: Time.now, content: data)
+        m.sign!(private_key)
+        s.event(**m.to_h)
       end
+      data = post || ''
+      post = nil
     end
   end
 
+  reactor.add_input(s.io) do
+    s.read_frames.each do |frame|
+      case frame.opcode
+      when :ping then s.pong(frame)
+      when :close then reactor.done!
+      when :pong then
+        pres.info("Pong", "%i ms" % [ ping_time ? (Time.now - ping_time) * 1000 : -1 ])
+        ping_time = nil
+      when :text, :binary then
+        case frame.event_type
+        when 'EOSE' then
+          pres.log("EOSE #{frame.payload.req}")
+          if frame.payload.req =~ /\Aprofile/
+            s.close_req(frame.payload.req)
+          end
+        when 'OK' then
+          if frame.payload.accepted != false
+            pres.log("Okay #{frame.payload.inspect}") if verbose
+          else
+            pres.warning("Rejected", "%s\n%s" % [ frame.payload.msg, frame.inspect ])
+          end
+        when 'NOTICE' then
+          pres.notice(frame.payload.msg)
+        when 'EVENT' then
+          pk_hex = frame.payload.pubkey.hexdigest
+          if frame.payload.kind == 0 && frame.payload.req =~ /\Aprofile/
+            profiles[pk_hex].merge!(JSON.load(frame.payload.content))
+            profiles[pk_hex][:updated_at] = Time.now
+            s.close_req(frame.payload.req)
+            if show_profiles
+              pres.profile(profiles[pk_hex],
+                           borderfg: palette[frame.payload.req] || 7)
+            end
+          else
+            if profiles[pk_hex].empty?
+              rn = "profile-#{pk_hex[0,8]}"
+              profiles[pk_hex][:req_id] = rn
+              profiles[pk_hex][:req_at] = Time.now
+              pres.log("REQ #{rn}")
+              s.open_req(rn, kinds: [ 0 ], authors: [ pk_hex ], limit: 1, until: Time.now.to_i + 120)
+            end
+            pres.note(frame.payload,
+                      profile: profiles[pk_hex],
+                      borderfg: palette[frame.payload.req] || 7)
+          end
+        else pres.info("Unknown event", frame.inspect, fg: palette[:info]) if verbose
+        end if SG::Nostr::Frame === frame
+      else pres.warn("Unknown frame type", frame.inspect,
+                     fg: 0, bg: 3)
+      end
+    end
+  end
+  reactor.add_idler do
+    pres.warning("Timed out #{tries}")
+    tries += 1
+    s.ping
+  end
+
+  reactor.serve!(timeout: 60*15)
   s.close
 end
