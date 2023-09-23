@@ -1,4 +1,8 @@
 class String
+  def split_at n
+    [ self[0, n], self[n, size - n] ]
+  end
+
   def strip_controls
     gsub(/[\x00-\x1F]+/, '')
   end

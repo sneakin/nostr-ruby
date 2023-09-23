@@ -4,6 +4,9 @@
 require 'sg/web_socket'
 require 'sg/hex'
 require 'sg/nostr'
+require 'forwardable'
+require 'sg/io/reactor'
+require 'sg/io/reactor/line_reader'
 
 class Binstr
   ProtocolId = 0x1234
@@ -74,6 +77,10 @@ class Binstr
     @websocket = ws
   end
 
+  def io
+    @websocket.io
+  end
+  
   def close
     @websocket.close
   end
@@ -103,17 +110,56 @@ class Binstr
   end
 end
 
-require 'thread'
-require 'forwardable'
-require 'sg/io/reactor'
-
 class BinstrServer
   class Client
+    class HTTPState
+      class ProtocolUpgraded < RuntimeError
+      end
+      
+      def initialize io
+        @io = io
+      end
+      
+      def process_input
+        # Read the HTTP request
+        # Queue and send an HTTP response
+      end
+      
+      def process_output pkt
+      end
+    end
+
+    class WSState
+      def initialize io, up_queue
+        @io = io
+        @ws = SG::WebSocket.new(@io)
+        @framer = Binstr.new(@ws)
+        @up_queue = up_queue
+      end
+      
+      def process_input
+        @framer.read_frames do |f|
+          @ws.pong(f) if f.opcode == :ping
+          next unless Binstr::Frame === f
+          if f.payload.valid?
+            @up_queue << f
+          else
+            send_frame(Frame::Bin.new(ProtocolId, 2, '', '', "Invalid signature."))
+          end
+        end
+      rescue EOFError, Errno::ECONNRESET
+        @ws.close
+      end
+
+      def send_frame fr
+        @framer.send_frame(fr)
+      end
+    end
+    
     def initialize io, up_queue
       @io = io
-      @ws = SG::WebSocket.new(io)
-      @framer = Binstr.new(@ws)
-      @up_queue = up_queue
+      @multi_io = SG::IO::Multiplexer.new(@io, output)
+      @state = WSState.new(@multi_io, up_queue)
     end
 
     def closed?
@@ -121,33 +167,17 @@ class BinstrServer
     end
 
     def send_frame fr
-      output << fr
+      @state.send_frame(fr)
     end
 
     def input
       @input ||= SG::IO::Reactor::BasicInput.new(@io) do
-        process_input
+        @state.process_input
       end
     end
 
     def output
-      @output ||= SG::IO::Reactor::QueuedOutput.new(@io) do |pkt|
-        @framer.send_frame(pkt)
-      end
-    end
-
-    def process_input
-      @framer.read_frames do |f|
-        @ws.pong(f) if f.opcode == :ping
-        next unless Binstr::Frame === f
-        if f.payload.valid?
-          @up_queue << f
-        else
-          @framer.send_msg('error', "Invalid signature")
-        end
-      end
-    rescue EOFError, Errno::ECONNRESET
-      @ws.close
+      @output ||= SG::IO::Reactor::QueuedOutput.new(@io)
     end
   end
 
@@ -168,8 +198,8 @@ class BinstrServer
     @clients[io] = Client.new(io, @queue)
   end
   
-  def process timeout = nil
-    @reactor.process(timeout)
+  def process timeout: nil
+    @reactor.process(timeout: timeout)
     @clients.delete_if { |_, c| c.closed? }
     flush_queue
     self
@@ -211,8 +241,18 @@ if $0 == __FILE__
     client.send_msg(key, msg)
   when 'stream' then
     uri = URI.parse(ARGV.shift)
-    client = Binstr.new(SG::WebSocket.new(TCPSocket.new(uri.host, uri.port)))
-    while true
+    key = ENV['KEY']
+    key = SG::Nostr::PrivateKey.load(key) || SG::Nostr::PrivateKey.generate
+
+    reactor = SG::IO::Reactor.new
+    sock = TCPSocket.new(uri.host, uri.port)
+    # reactor client output
+    qo = SG::IO::Reactor::QueuedOutput.new(sock)
+    mio = SG::IO::Multiplexer.new(sock, qo)
+    ws = SG::WebSocket.new(mio)
+    client = Binstr.new(ws)
+
+    reactor.add_input(sock) do
       client.read_frames.each do |fr|
         if Binstr::Frame === fr
           payload = fr.payload
@@ -222,6 +262,32 @@ if $0 == __FILE__
         end
       end
     end
+
+    reactor.add_output(qo)
+
+    lines = []
+    reader = SG::IO::Reactor::LineReader.new($stdin) do |line|
+      case line
+      when :eof then
+        puts("EOF")
+        reactor.del_input(reader)
+      when /\A\/ping/ then ws.ping
+      when /\A\/quit/ then
+        client.close
+        reactor.done!
+      else
+        puts("\e[34m#{line.inspect}\e[0m")
+        if line =~ /\A\s+\z/
+          client.send_msg(key, lines.join("\n"))
+          lines = []
+        else
+          lines << line
+        end
+      end
+    end
+    reactor.add_input(reader)
+    
+    reactor.serve!
   else raise "Unknown command"
   end
 end

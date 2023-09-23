@@ -226,6 +226,9 @@ EOT
     rescue ::IO::EAGAINWaitReadable, OpenSSL::SSL::SSLErrorWaitReadable
       @rest = rest
       nil
+    rescue
+      @rest = rest
+      raise
     end
     
     def read_frames &cb
