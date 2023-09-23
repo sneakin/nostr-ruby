@@ -42,7 +42,7 @@ EOT
     end
 
     def wait_for_input timeout = 1000
-      i,o,e = IO.select([@io], [], [], timeout)
+      i,o,e = ::IO.select([@io], [], [], timeout)
       i && i[0] == @io
     end
 
@@ -223,7 +223,7 @@ EOT
           return frame
         end
       end while rest != ''
-    rescue IO::EAGAINWaitReadable, OpenSSL::SSL::SSLErrorWaitReadable
+    rescue ::IO::EAGAINWaitReadable, OpenSSL::SSL::SSLErrorWaitReadable
       @rest = rest
       nil
     end
