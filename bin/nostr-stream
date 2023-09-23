@@ -164,7 +164,7 @@ if $0 == __FILE__
       if data =~ /^\/ping/
         s.ping
         ping_time = Time.now
-      else
+      elsif !(data =~ /\A\s*\z/)
         m = SG::Nostr::Message.new(kind: 1, created_at: Time.now, content: data)
         m.sign!(private_key)
         s.event(**m.to_h)
