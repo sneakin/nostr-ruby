@@ -5,7 +5,7 @@ class SG::IO::Reactor::LineReader < SG::IO::Reactor::IInput
     super(io)
     @separator = sep
     @buffer = ''
-    @read_size = read_size || 4096
+    @read_size = read_size || 8192
     @cb = cb
   end
 
@@ -17,8 +17,8 @@ class SG::IO::Reactor::LineReader < SG::IO::Reactor::IInput
     while data = @io.read_nonblock(@read_size)
       @buffer += data
     end
-  rescue IO::EAGAINWaitReadable
-  rescue EOFError
+  rescue ::IO::WaitReadable
+  rescue ::EOFError
     @eof = true
   end
 
@@ -26,9 +26,8 @@ class SG::IO::Reactor::LineReader < SG::IO::Reactor::IInput
     if @cb
       while line= next_line
         @cb.call(line)
+        break if line == :eof
       end
-
-      @cb.call(:eof) if @eof
     end
   end
   
@@ -44,7 +43,23 @@ class SG::IO::Reactor::LineReader < SG::IO::Reactor::IInput
       @buffer = rest
       return line
     else
-      return nil
+      if @eof
+        if @buffer.empty?
+          return :eof
+        else
+          line = @buffer
+          @buffer = ''
+          return line
+        end
+      else
+        return nil
+      end
     end
+  end
+  
+  def drain
+    r = @buffer
+    @buffer = nil
+    r
   end
 end

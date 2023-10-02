@@ -1,6 +1,7 @@
 class SG::IO::Reactor
   class Source
     attr_reader :io
+    alias to_io io
 
     def initialize io
       @io = io

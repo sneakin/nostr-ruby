@@ -3,6 +3,7 @@
 require_relative '../lib/sg/nostr'
 
 require 'sg/io/reactor'
+require 'sg/io/reactor/line_reader'
 require 'sg/terminstry'
 
 class Presenter
@@ -136,43 +137,35 @@ if $0 == __FILE__
   end
   
   profiles = Hash.new { |h, k| h[k] = Hash.new }
-  pres = Presenter.new($stdout)
+  stdout_q = SG::IO::Reactor::QueuedOutput.new($stdout)
+  pres = Presenter.new(stdout_q)
   data = ''
   post = nil
   ping_time = nil
   tries = 0
 
   reactor = SG::IO::Reactor.new
-  reactor.add_input($stdin) do
-    begin
-      line = $stdin.read_nonblock(4096)
-      pre, blank, post = line.partition(/(?:[\r]?[\n]){2}/)
-      if (blank == '' && data[-1] == "\n" && pre =~ /^[\r]?[\n]/)
-        data = data[0..-1]
-        blank = "\n\n"
-        post = pre[1..-1]
-      else
-        data += pre
-      end
-      pres.log("Read #{pre.inspect} #{blank.inspect} #{post.inspect}")
-    rescue IO::EAGAINWaitReadable
-    rescue EOFError
-      reactor.done!
-    end while blank == ''
+  reactor.add_output(stdout_q)
 
-    if blank != ''
-      if data =~ /^\/ping/
-        s.ping
-        ping_time = Time.now
-      elsif !(data =~ /\A\s*\z/)
+  reader = SG::IO::Reactor::LineReader.new($stdin) do |line|
+    pres.log("Read #{line.inspect}")
+    case line
+    when :eof, /\A\/quit/ then reactor.done!
+    when /\A\/ping/ then
+      s.ping
+      ping_time = Time.now
+    when /\A\s+\z/ then
+      unless data.empty?
         m = SG::Nostr::Message.new(kind: 1, created_at: Time.now, content: data)
         m.sign!(private_key)
         s.event(**m.to_h)
+        data = ''
       end
-      data = post || ''
-      post = nil
+    else
+      data += line
     end
   end
+  reactor.add_input(reader)
 
   reactor.add_input(s.io) do
     s.read_frames.each do |frame|
@@ -190,6 +183,7 @@ if $0 == __FILE__
             s.close_req(frame.payload.req)
           end
         when 'OK' then
+
           if frame.payload.accepted != false
             pres.log("Okay #{frame.payload.inspect}") if verbose
           else
@@ -226,10 +220,15 @@ if $0 == __FILE__
       end
     end
   end
+
+  last_idle = Time.now
   reactor.add_idler do
-    pres.warning("Timed out #{tries}")
-    tries += 1
-    s.ping
+    if Time.now - last_idle > 60
+      pres.warning("Timed out #{tries}")
+      tries += 1
+      last_idle = Time.now
+      s.ping
+    end
   end
 
   reactor.serve!(timeout: 60*15)

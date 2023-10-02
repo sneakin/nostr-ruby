@@ -11,7 +11,7 @@ class SG::IO::Reactor
     end
 
     def delete actor
-      io = IO === actor ? actor : actor.io
+      io = Source === actor ? actor.io : actor
       @ios.delete(io)
     end
 

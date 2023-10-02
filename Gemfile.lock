@@ -3,6 +3,7 @@ PATH
   specs:
     nostr (0.1.0)
       bech32
+      bip-schnorr
       rake
       unicode-display_width
       unicode-emoji
@@ -28,7 +29,6 @@ PLATFORMS
   aarch64-linux-android
 
 DEPENDENCIES
-  bip-schnorr
   nostr!
 
 BUNDLED WITH

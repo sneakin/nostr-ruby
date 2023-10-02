@@ -19,9 +19,18 @@ module SG::IO
       self
     end
     
+    def close_read
+      (OpenSSL::SSL::SSLSocket === input ? input.close : input.close_read)
+    end
+    
+    def close_write
+      (OpenSSL::SSL::SSLSocket === output ? output.close : output.close_write)
+    end
+        
     def close dir = nil
-      input.close unless dir == :output
-      output.close unless dir == :input
+      # SSLSocket only has #close
+      close_read unless dir == :output
+      close_write unless dir == :input
       self
     end
     
@@ -30,7 +39,7 @@ module SG::IO
     end
 
     def eof?
-      input.eof? && output.eof?
+      input.eof? # || output.eof?
     end
   end
 end

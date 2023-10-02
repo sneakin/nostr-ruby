@@ -22,10 +22,21 @@ class SG::IO::Reactor
     @done = false
   end
 
-  def add_input actor_or_io, io = nil, &cb
-    add_to_set(@inputs, actor_or_io, io, BasicInput, &cb)
+  def << actor
+    case actor
+    when IInput then add_input(actor)
+    when IOutput then add_output(actor)
+    else raise ArgumentError.new("Only IInput and IOutput allowed")
+    end
   end
-
+  
+  def delete actor
+    del_input(actor)
+    del_output(actor)
+    del_err(actor)
+    self
+  end
+  
   def add_to_set set, actor_or_io, io, actor_kind, &cb
     if actor_or_io && cb
       set.add(actor_kind.new(actor_or_io, &cb), actor_or_io)
@@ -34,6 +45,11 @@ class SG::IO::Reactor
     else
       raise ArgumentError.new("Expected an IO and block, or Actor and IO.")
     end
+  end
+
+  def add_input actor_or_io, io = nil, &cb
+    $stderr.puts("Adding input: #{actor_or_io.inspect} #{io.inspect}")
+    add_to_set(@inputs, actor_or_io, io, BasicInput, &cb)
   end
 
   def del_input actor
@@ -69,17 +85,19 @@ class SG::IO::Reactor
   end
 
   def process timeout: nil
-    i,o,e = ::IO.select(@inputs.needs_processing.keys,
-                        @outputs.needs_processing.keys,
-                        @errs.needs_processing.keys,
-                        timeout)
+    ios = [ @inputs.needs_processing.keys,
+            @outputs.needs_processing.keys,
+            @errs.needs_processing.keys
+          ]
+    $stderr.puts("Reactor select #{ios.inspect}") 
+    i,o,e = ::IO.select(*ios, timeout) unless ios.all?(&:empty?)
     if i || o || e
       @inputs.process(i)
       @outputs.process(o)
       @errs.process(e)
-    else
-      @idlers.each { |i| i.call }
     end
+    
+    @idlers.each { |i| i.call }
       
     self
   end
@@ -103,7 +121,7 @@ class SG::IO::Reactor
     @done
   end
   
-  def serve! timeout: nil, &cb
+  def serve! timeout: 60, &cb
     if cb
       until done?
         process(timeout: timeout)

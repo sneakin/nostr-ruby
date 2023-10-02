@@ -11,6 +11,13 @@ class SG::IO::Reactor
       cin, cout = @cb.call(sock)
       @dispatcher.add_input(cin, sock) if cin
       @dispatcher.add_output(cout, sock) if cout
+    rescue
+      @on_error ? @on_error.call($!) : raise($!)
+    end
+    
+    def on_error &cb
+      @on_error = cb
+      self
     end
   end
 end

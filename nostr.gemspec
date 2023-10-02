@@ -17,5 +17,6 @@ Gem::Specification.new do |s|
   s.add_dependency 'bech32'
   s.add_dependency 'unicode-display_width'
   s.add_dependency 'unicode-emoji'
-  #s.add_dependency 'schnorr'
+  s.add_dependency 'bip-schnorr'
+  #s.add_dependency 'webrick'
 end

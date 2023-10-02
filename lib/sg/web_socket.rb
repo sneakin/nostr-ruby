@@ -9,10 +9,11 @@ module SG
   class WebSocket
     class ConnectError < RuntimeError; end
     
-    attr_reader :io
+    attr_accessor :io
     
-    def initialize io
+    def initialize io, init_data: nil
       @io = io
+      @rest = init_data
     end
     
     VERSION = 13
@@ -30,7 +31,7 @@ Sec-WebSocket-Version: %i
 
 EOT
       @io.flush
-      wait_for_input
+      #wait_for_input
       resp = read_http_response
       raise ConnectError.new("Error requesting websocket: #{resp[0]}") unless resp[0] =~ /^HTTP\/1\.1 +101/
       accept_hdr = resp.find { |l| l =~ /^Sec-WebSocket-Accept: (.*)$/i } # todo multiline?
@@ -51,7 +52,7 @@ EOT
       lines = []
       begin
         line = @io.readline
-        break unless line && !line.empty? && line != "\r\n"
+        break unless line && !line.empty? && !(line =~ /\A[\r]?\n\z/m)
         lines << line
       end while line
       lines
@@ -216,14 +217,16 @@ EOT
       begin
         frame, more = Frame.unpack(rest)
         if frame == nil || frame.length != frame.payload.size
-          to_read = frame ? frame.length - frame.payload.size : 4096
-          rest += io.read_nonblock(to_read)
+          to_read = frame ? frame.length - frame.payload.size : 8192
+          data = io.read_nonblock(to_read)
+          $stderr.puts("#{self.object_id} read_frame: #{data.inspect}")
+          rest += data
         else
           @rest = more
           return frame
         end
       end while rest != ''
-    rescue ::IO::EAGAINWaitReadable, OpenSSL::SSL::SSLErrorWaitReadable
+    rescue ::IO::WaitReadable, ::OpenSSL::SSL::SSLErrorWaitReadable
       @rest = rest
       nil
     rescue
@@ -261,6 +264,7 @@ EOT
     end
 
     def send_frame frame
+      $stderr.puts("#{self.object_id} send_frame: #{frame.inspect}")
       io.write(frame.pack)
       io.flush
       self

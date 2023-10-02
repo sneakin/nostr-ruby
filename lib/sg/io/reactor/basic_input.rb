@@ -5,6 +5,8 @@ class SG::IO::Reactor
       @cb = cb
     end
 
+    def needs_processing?; !closed?; end
+
     def process
       @cb.call
     end

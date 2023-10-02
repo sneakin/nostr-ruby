@@ -12,7 +12,9 @@ module SG::Nostr
                     else PublicKey.new(pub)
                     end
     end
-    
+
+    # todo rename digest as it's not a digest, just similar output to Digest modules
+        
     def hexdigest
       @secret.to_s(16).rjust(64, '0')
     end
@@ -31,6 +33,15 @@ module SG::Nostr
     
     def verify msg, sig
       Schnorr.valid_sig?(msg, digest, sig)
+    end
+    
+    def to_openssl
+      group = OpenSSL::PKey::EC::Group.new('secp256k1')
+      new_key = OpenSSL::PKey::EC.new(group)
+
+      new_key.private_key = OpenSSL::BN.new(@secret, 16)
+      new_key.public_key = OpenSSL::PK.new(group.generator.mul(new_key.private_key))
+      new_key
     end
 
     def self.generate group = ECDSA::Group::Secp256k1, even_only: true
