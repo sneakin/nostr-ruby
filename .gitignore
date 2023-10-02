@@ -1,0 +1,9 @@
+*~
+*.bak
+*.log
+#*#
+ETAGS
+TAGS
+doc/api
+.bundle
+.gems
