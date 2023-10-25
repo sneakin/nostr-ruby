@@ -48,7 +48,6 @@ class SG::IO::Reactor
   end
 
   def add_input actor_or_io, io = nil, &cb
-    $stderr.puts("Adding input: #{actor_or_io.inspect} #{io.inspect}")
     add_to_set(@inputs, actor_or_io, io, BasicInput, &cb)
   end
 
@@ -89,7 +88,6 @@ class SG::IO::Reactor
             @outputs.needs_processing.keys,
             @errs.needs_processing.keys
           ]
-    $stderr.puts("Reactor select #{ios.inspect}") 
     i,o,e = ::IO.select(*ios, timeout) unless ios.all?(&:empty?)
     if i || o || e
       @inputs.process(i)

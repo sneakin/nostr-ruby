@@ -219,7 +219,7 @@ EOT
         if frame == nil || frame.length != frame.payload.size
           to_read = frame ? frame.length - frame.payload.size : 8192
           data = io.read_nonblock(to_read)
-          $stderr.puts("#{self.object_id} read_frame: #{data.inspect}")
+          #$stderr.puts("#{self.object_id} read_frame: #{data.inspect}")
           rest += data
         else
           @rest = more
@@ -264,7 +264,7 @@ EOT
     end
 
     def send_frame frame
-      $stderr.puts("#{self.object_id} send_frame: #{frame.inspect}")
+      # $stderr.puts("#{self.object_id} send_frame: #{frame.inspect}")
       io.write(frame.pack)
       io.flush
       self
