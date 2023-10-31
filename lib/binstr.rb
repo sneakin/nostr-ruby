@@ -369,9 +369,10 @@ if $0 == __FILE__
   require 'shellwords'
   #require 'webrick/https'
   require 'sg/nostr/ssl'
+  require 'sg/selfhelp'
   
   case cmd= ARGV.shift
-  when 'server' then
+  when 'server' then # Starts a server.
     port = (ARGV.shift || 4899).to_i
     $stderr.puts("Listening on port #{port}.")
     sock = TCPServer.new(port)
@@ -397,7 +398,7 @@ if $0 == __FILE__
     bs = BinstrServer.new
     bs.add_listener(sock)
     bs.serve!
-  when 'send' then
+  when 'send' then # Sends the second argument as a message to the server named by the first argument.
     uri = URI.parse(ARGV.shift)
     msg = ARGV.shift || "Hello. The time is #{Time.now}."
     key = ENV['KEY']
@@ -416,7 +417,7 @@ if $0 == __FILE__
     client = Binstr.new(ws)
     client.send_msg(key, msg)
     client.close
-  when 'stream' then
+  when 'stream' then # Connects to a server and prints any received message.
     uri = URI.parse(ARGV.shift)
     key = ENV['KEY']
     key = SG::Nostr::PrivateKey.load(key) || SG::Nostr::PrivateKey.generate
@@ -489,6 +490,8 @@ if $0 == __FILE__
 
     $stderr.puts("Running")    
     reactor.serve!
+  when /-*help/ then # Prints a list of commands.
+    SG::SelfHelp.print
   else raise "Unknown command"
   end
 end

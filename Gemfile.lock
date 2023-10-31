@@ -1,3 +1,12 @@
+GIT
+  remote: gitolite@sg-one:semgap/sg-gem.git
+  revision: a9d5be6cfbd3eae56d7c7cb32692528a84f4644d
+  specs:
+    sg (0.1.0)
+      rake (~> 13.0.0)
+      unicode-display_width (~> 2.5.0)
+      unicode-emoji (~> 3.4.0)
+
 PATH
   remote: .
   specs:
@@ -5,6 +14,7 @@ PATH
       bech32
       bip-schnorr
       rake
+      sg
       unicode-display_width
       unicode-emoji
 
@@ -19,9 +29,9 @@ GEM
     ecdsa_ext (0.5.0)
       ecdsa (~> 1.2.0)
     rake (13.0.6)
-    thor (1.2.2)
-    unicode-display_width (2.4.2)
-    unicode-emoji (3.3.2)
+    thor (1.3.0)
+    unicode-display_width (2.5.0)
+    unicode-emoji (3.4.0)
       unicode-version (~> 1.0)
     unicode-version (1.3.0)
 
@@ -30,6 +40,7 @@ PLATFORMS
 
 DEPENDENCIES
   nostr!
+  sg!
 
 BUNDLED WITH
    2.4.15

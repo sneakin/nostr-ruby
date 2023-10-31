@@ -14,7 +14,7 @@ class Presenter
   end
 
   def msg_panel title, content, **opts
-    @io.puts(SG::Terminstry.tabbox(title, content, **opts))
+    @io.puts(SG::Terminstry::Drawing.tabbox(title, content, **opts))
     self
   end
 

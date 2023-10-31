@@ -6,3 +6,5 @@ source "https://rubygems.org"
 gemspec
 #gem 'schnorr', git: 'https://github.com/chaintope/schnorrrb', branch: 'master' #ref: '186524d'
 #gem 'bip-schnorr' #, git: 'https://github.com/chaintope/bip-schnorrrb', branch: 'master'
+
+gem 'sg', git: 'gitolite@sg-one:semgap/sg-gem.git'

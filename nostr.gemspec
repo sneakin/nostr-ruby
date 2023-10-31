@@ -19,4 +19,5 @@ Gem::Specification.new do |s|
   s.add_dependency 'unicode-emoji'
   s.add_dependency 'bip-schnorr'
   #s.add_dependency 'webrick'
+  s.add_dependency 'sg'
 end
