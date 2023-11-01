@@ -1,6 +1,6 @@
 GIT
   remote: gitolite@sg-one:semgap/sg-gem.git
-  revision: a9d5be6cfbd3eae56d7c7cb32692528a84f4644d
+  revision: 6e0a2e0992e5fb2fe4622a9d3553b0fabe5bd4e1
   specs:
     sg (0.1.0)
       rake (~> 13.0.0)
@@ -37,6 +37,7 @@ GEM
 
 PLATFORMS
   aarch64-linux-android
+  x86_64-linux
 
 DEPENDENCIES
   nostr!
