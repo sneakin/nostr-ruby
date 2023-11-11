@@ -1,3 +1,7 @@
+require 'sg/ext'
+
+using SG::Ext
+
 module SG::Nostr
   class Frame
     attr_reader :frame

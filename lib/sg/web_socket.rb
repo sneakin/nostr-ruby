@@ -4,6 +4,9 @@ require 'uri'
 require 'openssl'
 require 'digest/sha1'
 require 'securerandom'
+require 'sg/ext'
+
+using SG::Ext
 
 module SG
   class WebSocket

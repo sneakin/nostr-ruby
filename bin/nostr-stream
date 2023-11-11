@@ -1,12 +1,18 @@
 #!/usr/bin/env -S bundle exec ruby
 
+require 'sg/ext'
+
 require_relative '../lib/sg/nostr'
 
 require 'sg/io/reactor'
 require 'sg/io/reactor/line_reader'
 require 'sg/terminstry'
 
+using SG::Ext
+
 class Presenter
+  using SG::Ext
+
   attr_accessor :io
 
   def initialize io
@@ -57,6 +63,8 @@ end
 if $0 == __FILE__
   # todo one shot REQs to get profile names
   
+  using SG::Ext
+
   uri = nil
   since = 5
   self_since = 60*60

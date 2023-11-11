@@ -1,6 +1,7 @@
 #!/usr/bin/env -S bundle exec ruby
 # coding: utf-8
 
+require 'sg/ext'
 require 'sg/web_socket'
 require 'sg/hex'
 require 'sg/nostr'
@@ -8,6 +9,8 @@ require 'forwardable'
 require 'sg/io/reactor'
 require 'sg/io/reactor/line_reader'
 require 'sg/io/reactor/socket_connector'
+
+using SG::Ext
 
 class Binstr
   ProtocolId = 0x1234

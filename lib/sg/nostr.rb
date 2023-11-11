@@ -13,7 +13,7 @@ require 'forwardable'
 require 'optionparser'
 
 require 'sg/hex'
-require 'sg/core_ext'
+require 'sg/ext'
 require 'sg/web_socket'
 
 module SG::Nostr

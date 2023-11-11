@@ -1,6 +1,6 @@
 GIT
   remote: gitolite@sg-one:semgap/sg-gem.git
-  revision: a9d5be6cfbd3eae56d7c7cb32692528a84f4644d
+  revision: 62e1246857bdad8c6f0286707827b1bf17de1328
   specs:
     sg (0.1.0)
       rake (~> 13.0.0)
