@@ -1,8 +1,8 @@
 GIT
   remote: gitolite@sg-one:semgap/sg-gem.git
-  revision: 62e1246857bdad8c6f0286707827b1bf17de1328
+  revision: b7b343dfbf841944c920551429d202f72e87360c
   specs:
-    sg (0.1.0)
+    sg (0.2.0)
       rake (~> 13.0.0)
       unicode-display_width (~> 2.5.0)
       unicode-emoji (~> 3.4.0)
@@ -23,17 +23,17 @@ GEM
   specs:
     bech32 (1.4.2)
       thor (>= 1.1.0)
-    bip-schnorr (0.6.0)
+    bip-schnorr (0.7.0)
       ecdsa_ext (~> 0.5.0)
     ecdsa (1.2.0)
-    ecdsa_ext (0.5.0)
+    ecdsa_ext (0.5.1)
       ecdsa (~> 1.2.0)
     rake (13.0.6)
-    thor (1.3.0)
+    thor (1.3.1)
     unicode-display_width (2.5.0)
     unicode-emoji (3.4.0)
       unicode-version (~> 1.0)
-    unicode-version (1.3.0)
+    unicode-version (1.4.0)
 
 PLATFORMS
   aarch64-linux-android
